@@ -4,12 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   
+  <!-- ANTI-CACHE POUR FORCER LES TÉLÉPHONES ET MAC À PRENDRE LE NOUVEAU CODE -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
   <title>Suivi Budget Mensuel & Annuel - Perso</title>
 
+  <!-- LIGNES POUR L'ICÔNE DE L'APPLICATION -->
   <link rel="icon" type="image/png" href="logo.png">
   <link rel="apple-touch-icon" href="logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -163,8 +165,8 @@
             <button v-if="activeTab !== 'Bilan'" @click="importFromPrevious" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-medium flex items-center gap-2 transition card-shadow">
               <i class="ph-bold ph-arrow-u-down-left"></i> Mois précédent
             </button>
-            <button v-if="activeTab !== 'Déc' && activeTab !== 'Bilan'" @click="propagateFutureMonths" class="text-xs bg-blue-500 hover:bg-blue-600 px-3 py-1.5 rounded font-bold flex items-center gap-2 transition card-shadow">
-              <i class="ph-bold ph-rocket-launch"></i> Propager jusqu'en Décembre
+            <button v-if="activeTab !== 'Bilan'" @click="propagateFutureMonths" class="text-xs bg-blue-500 hover:bg-blue-600 px-3 py-1.5 rounded font-bold flex items-center gap-2 transition card-shadow">
+              <i class="ph-bold ph-rocket-launch"></i> Propager sur l'avenir
             </button>
           </div>
         </div>
@@ -328,6 +330,7 @@
     </div>
   </div>
 
+  <!-- VUE : BILAN ANNUEL -->
   <div v-if="activeTab === 'Bilan'" class="animate-fade-in">
     <div class="bg-white rounded-xl card-shadow p-8 text-center mb-8">
       <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 text-blue-500 mb-4">
@@ -469,13 +472,13 @@
         variables: { title: 'VARIABLES', bg: 'bg-[#9C84C4]' }
       };
 
-      // --- SÉCURITÉS SUR LES CALCULS ---
+      // --- LE MOTEUR MATHÉMATIQUE (DETTES ET ÉPARGNE) ---
       const calculateNextMonthDettes = (prevDettes) => {
         if (!Array.isArray(prevDettes)) return [];
         return prevDettes.map(item => {
             let nouveauResteDu = parseFloat(item.resteDu) || 0;
             let nouveauxMoisRestants = parseInt(item.moisRestants) || 0;
-            const payePrecedemment = item.reel > 0 ? parseFloat(item.reel) : parseFloat(item.prevu);
+            const payePrecedemment = item.reel > 0 ? parseFloat(item.reel) : (parseFloat(item.prevu) || 0);
             const taux = parseFloat(item.taux) || 0;
 
             if (nouveauResteDu > 0 && payePrecedemment > 0) {
@@ -504,11 +507,12 @@
       const calculateNextMonthEpargne = (prevEpargne) => {
         if (!Array.isArray(prevEpargne)) return [];
         return prevEpargne.map(item => {
+            const epargneMois = item.reel > 0 ? parseFloat(item.reel) : (parseFloat(item.prevu) || 0);
             return {
                 ...item,
                 reel: 0,
                 diff: 0,
-                reserve: (parseFloat(item.reserve) || 0) + (parseFloat(item.reel) || 0)
+                reserve: (parseFloat(item.reserve) || 0) + epargneMois
             };
         });
       };
@@ -560,53 +564,7 @@
           if (docSnap.exists()) {
             let cloudData = docSnap.data().budgetData;
             
-            // SÉCURITÉ : Vérification robuste des données reçues du cloud
             if (!cloudData || typeof cloudData !== 'object') cloudData = {};
-
-            if (docId === "commun_2026_v1") {
-                let needsUpdate = false;
-                if (!cloudData['Jan'] || !Array.isArray(cloudData['Jan'].revenus) || cloudData['Jan'].revenus.length === 0 || cloudData['Jan'].revenus[0].name === 'Salaire') needsUpdate = true;
-                if (!cloudData['Oct'] || !Array.isArray(cloudData['Oct'].fixes) || !cloudData['Oct'].fixes.some(f => f.name === 'Ecole NDC')) needsUpdate = true;
-                
-                if (needsUpdate) {
-                    months.forEach(m => { cloudData[m] = generateEmptyMonth('Commun', m); });
-                    setDoc(currentDocRef, { budgetData: cloudData, timestamp: Date.now() });
-                    return; 
-                }
-            }
-
-            if (docId === "perso_2026_v1") {
-                let needsUpdatePerso = false;
-                if (!cloudData['Juil'] || !Array.isArray(cloudData['Juil'].dettes) || cloudData['Juil'].dettes.length < 3 || cloudData['Juil'].dettes[0].name !== 'Izicarte' || cloudData['Juil'].dettes[0].resteDu !== 5478) {
-                    needsUpdatePerso = true;
-                }
-                if (!cloudData['Aoû'] || !Array.isArray(cloudData['Aoû'].dettes) || cloudData['Aoû'].dettes.length < 3 || cloudData['Aoû'].dettes[0].name !== 'Izicarte' || cloudData['Aoû'].dettes[0].resteDu === 0 || cloudData['Aoû'].dettes[0].resteDu === 5478) {
-                    needsUpdatePerso = true;
-                }
-
-                if (needsUpdatePerso) {
-                    const baseDettesJuil = [
-                        { name: 'Izicarte', occ: false, prevu: 150, reel: 150, diff: 0, resteDu: 5478, taux: 16, mensualite: 150, anticipe: 0, moisRestants: 51 },
-                        { name: 'Crédit', occ: false, prevu: 131, reel: 131, diff: 0, resteDu: 4744, taux: 0, mensualite: 131, anticipe: 0, moisRestants: 37 },
-                        { name: 'Voiture', occ: false, prevu: 250, reel: 248, diff: 2, resteDu: 12895, taux: 9, mensualite: 250, anticipe: 0, moisRestants: 66 }
-                    ];
-
-                    if(!cloudData['Juil']) cloudData['Juil'] = generateEmptyMonth('Perso', 'Juil');
-                    cloudData['Juil'].dettes = JSON.parse(JSON.stringify(baseDettesJuil));
-                    
-                    const monthsToUpdate = ['Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
-                    let currentDettes = JSON.parse(JSON.stringify(baseDettesJuil));
-
-                    monthsToUpdate.forEach(m => {
-                        currentDettes = calculateNextMonthDettes(currentDettes);
-                        if (!cloudData[m]) cloudData[m] = generateEmptyMonth('Perso', m);
-                        cloudData[m].dettes = JSON.parse(JSON.stringify(currentDettes));
-                    });
-
-                    setDoc(currentDocRef, { budgetData: cloudData, timestamp: Date.now() });
-                    return; 
-                }
-            }
 
             if (Object.keys(cloudData).length === 0) {
                setDoc(currentDocRef, { budgetData: data.value, timestamp: Date.now() });
@@ -633,7 +591,6 @@
         });
       };
 
-      // INITIALISATION SÉCURISÉE AVANT LE PREMIER AFFICHAGE
       const loadContextData = () => {
         isInitialLoad = true;
         const localData = localStorage.getItem(`budget_${currentAccount.value}_${currentYear.value}_v1`);
@@ -649,7 +606,6 @@
           months.forEach(m => tempObj[m] = generateEmptyMonth(currentAccount.value, m));
         }
         
-        // S'assurer que tous les mois existent pour éviter les plantages
         months.forEach(m => {
           if (!tempObj[m]) tempObj[m] = generateEmptyMonth(currentAccount.value, m);
         });
@@ -657,7 +613,6 @@
         data.value = tempObj;
       };
 
-      // On charge les données localement TOUT DE SUITE (avant que la page HTML ne s'affiche)
       loadContextData();
 
       const changeContext = () => {
@@ -690,8 +645,6 @@
         }, 1500);
       }, { deep: true });
 
-      // C'EST ICI LA CORRECTION ANTI-CRASH POUR LE HTML
-      // Si la donnée du mois en cours est bizarrement absente, on renvoie une structure vide propre pour ne pas crasher.
       const currentData = computed(() => {
         return data.value[activeTab.value] || { revenus: [], epargne: [], fixes: [], dettes: [], variables: [] };
       });
@@ -759,16 +712,19 @@
         }
       };
 
+      // --- PROPAGATION MULTI-ANNÉES (JUSQU'EN 2030) ---
       const propagateFutureMonths = () => {
         const currentIndex = months.indexOf(activeTab.value);
-        if (currentIndex === -1 || currentIndex === 11) {
-            alert("Vous êtes déjà en Décembre ou sur le Bilan.");
+        if (currentIndex === -1) {
+            alert("Vous êtes sur le Bilan.");
             return;
         }
 
-        if (confirm(`Voulez-vous propager les dettes et l'épargne de ${activeTab.value} à tous les mois suivants jusqu'en Décembre ?`)) {
+        if (confirm(`Voulez-vous propager les calculs (Dettes et Épargne) de ${activeTab.value} ${currentYear.value} sur TOUS les mois et les années suivantes (jusqu'en 2030) ?`)) {
+            
             let currentMonthData = data.value[activeTab.value] ? JSON.parse(JSON.stringify(data.value[activeTab.value])) : generateEmptyMonth(currentAccount.value, activeTab.value);
             
+            // 1. On finit l'année en cours
             for (let i = currentIndex + 1; i < 12; i++) {
                 const nextMonthName = months[i];
                 if (!data.value[nextMonthName]) data.value[nextMonthName] = generateEmptyMonth(currentAccount.value, nextMonthName);
@@ -779,11 +735,41 @@
                 data.value[nextMonthName].dettes = JSON.parse(JSON.stringify(currentMonthData.dettes));
                 data.value[nextMonthName].epargne = JSON.parse(JSON.stringify(currentMonthData.epargne));
             }
-            alert("Propagation terminée avec succès !");
+            
+            // 2. On propage sur les années suivantes (2027 à 2030)
+            let lastMonthData = JSON.parse(JSON.stringify(data.value['Déc']));
+            let currentY = parseInt(currentYear.value);
+
+            for (let y = currentY + 1; y <= 2030; y++) {
+                let yearKey = `budget_${currentAccount.value}_${y}_v1`;
+                let yearDataStr = localStorage.getItem(yearKey);
+                let yearData = yearDataStr ? JSON.parse(yearDataStr) : {};
+
+                for (let i = 0; i < 12; i++) {
+                    let m = months[i];
+                    if (!yearData[m]) yearData[m] = generateEmptyMonth(currentAccount.value, m);
+
+                    lastMonthData.dettes = calculateNextMonthDettes(lastMonthData.dettes || []);
+                    lastMonthData.epargne = calculateNextMonthEpargne(lastMonthData.epargne || []);
+
+                    yearData[m].dettes = JSON.parse(JSON.stringify(lastMonthData.dettes));
+                    yearData[m].epargne = JSON.parse(JSON.stringify(lastMonthData.epargne));
+                }
+
+                // Sauvegarde locale de l'année
+                localStorage.setItem(yearKey, JSON.stringify(yearData));
+                
+                // Sauvegarde Cloud de l'année
+                setDoc(doc(db, "budgets_officiels", `${currentAccount.value.toLowerCase()}_${y}_v1`), { 
+                    budgetData: yearData, 
+                    timestamp: Date.now() 
+                }, { merge: true });
+            }
+
+            alert("Propagation réussie sur toutes les années futures !");
         }
       };
 
-      // SÉCURITÉ DE CALCULS : Array.isArray protège contre les données corrompues de Firebase
       const sumReel = (arr) => Array.isArray(arr) ? arr.reduce((sum, item) => sum + (parseFloat(item.reel) || 0), 0) : 0;
       const sumPrevu = (arr) => Array.isArray(arr) ? arr.reduce((sum, item) => sum + (parseFloat(item.prevu) || 0), 0) : 0;
 
@@ -975,7 +961,6 @@
       };
 
       onMounted(() => { 
-        // Les données locales sont déjà chargées avant le mount (plus haut)
         setupFirebaseListener(); 
         updateChart(); 
       });
