@@ -4,12 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   
+  <!-- ANTI-CACHE POUR FORCER LES TÉLÉPHONES ET MAC À PRENDRE LE NOUVEAU CODE -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
   <title>Suivi Budget Mensuel & Annuel - Perso</title>
 
+  <!-- LIGNES POUR L'ICÔNE DE L'APPLICATION -->
   <link rel="icon" type="image/png" href="logo.png">
   <link rel="apple-touch-icon" href="logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -119,6 +121,7 @@
     </button>
   </div>
 
+  <!-- VUE MENSUELLE CLASSIQUE -->
   <div v-if="activeTab !== 'Bilan'">
     
     <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-8">
@@ -160,9 +163,15 @@
             <i class="ph ph-wallet text-xl"></i>
             <h2 class="font-bold tracking-wide uppercase text-sm">VUE D'ENSEMBLE {{ activeTab.toUpperCase() }}</h2>
           </div>
-          <button v-if="activeTab !== 'Jan' && activeTab !== 'Bilan'" @click="importFromPrevious" class="text-xs bg-blue-500 hover:bg-blue-600 px-3 py-1.5 rounded font-medium flex items-center gap-2 transition card-shadow">
-            <i class="ph-bold ph-magic-wand"></i> Importer récurrences
-          </button>
+          <div class="flex gap-2">
+            <!-- LE BOUTON EST MAINTENANT ACTIF AUSSI EN JANVIER POUR LES CHANGEMENTS D'ANNÉE -->
+            <button v-if="activeTab !== 'Bilan'" @click="importFromPrevious" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-medium flex items-center gap-2 transition card-shadow">
+              <i class="ph-bold ph-arrow-u-down-left"></i> Mois précédent
+            </button>
+            <button v-if="activeTab !== 'Déc' && activeTab !== 'Bilan'" @click="propagateFutureMonths" class="text-xs bg-blue-500 hover:bg-blue-600 px-3 py-1.5 rounded font-bold flex items-center gap-2 transition card-shadow">
+              <i class="ph-bold ph-rocket-launch"></i> Propager jusqu'en Décembre
+            </button>
+          </div>
         </div>
         <div class="p-6">
           <table class="w-full text-left">
@@ -324,6 +333,7 @@
     </div>
   </div>
 
+  <!-- VUE : BILAN ANNUEL -->
   <div v-if="activeTab === 'Bilan'" class="animate-fade-in">
     <div class="bg-white rounded-xl card-shadow p-8 text-center mb-8">
       <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 text-blue-500 mb-4">
@@ -437,12 +447,11 @@
   createApp({
     setup() {
       const currentAccount = ref('Perso');
-      const currentYear = ref('2026'); // NOUVEAU : Sélecteur d'année
+      const currentYear = ref('2026');
       let unsubscribeSnapshot = null;
       let saveTimeout;
       let isInitialLoad = true;
 
-      // NOUVEAU : L'identifiant de la BDD s'adapte à l'année !
       const getDocId = () => {
         return `${currentAccount.value.toLowerCase()}_${currentYear.value}_v1`;
       };
@@ -466,7 +475,7 @@
         variables: { title: 'VARIABLES', bg: 'bg-[#9C84C4]' }
       };
 
-      // --- LE MOTEUR MATHÉMATIQUE DES CRÉDITS ---
+      // --- LE MOTEUR MATHÉMATIQUE DES CRÉDITS ET ÉPARGNE ---
       const calculateNextMonthDettes = (prevDettes) => {
         return prevDettes.map(item => {
             let nouveauResteDu = parseFloat(item.resteDu) || 0;
@@ -489,10 +498,21 @@
 
             return {
                 ...item,
-                reel: 0, // Remis à 0 pour le mois suivant
+                reel: 0,
                 diff: 0,
                 resteDu: nouveauResteDu,
                 moisRestants: nouveauxMoisRestants
+            };
+        });
+      };
+
+      const calculateNextMonthEpargne = (prevEpargne) => {
+        return prevEpargne.map(item => {
+            return {
+                ...item,
+                reel: 0,
+                diff: 0,
+                reserve: (parseFloat(item.reserve) || 0) + (parseFloat(item.reel) || 0)
             };
         });
       };
@@ -545,60 +565,12 @@
           if (docSnap.exists()) {
             let cloudData = docSnap.data().budgetData;
             
-            // AUTO-MISE A JOUR DE 2026 POUR COMMUN ET PERSO
-            if (docId === "commun_2026_v1" && cloudData) {
-                let needsUpdate = false;
-                if (cloudData['Jan'] && (!cloudData['Jan'].revenus[0] || cloudData['Jan'].revenus[0].name === 'Salaire')) needsUpdate = true;
-                if (cloudData['Oct'] && !cloudData['Oct'].fixes.some(f => f.name === 'Ecole NDC')) needsUpdate = true;
-                if (needsUpdate) {
-                    months.forEach(m => { cloudData[m] = generateEmptyMonth('Commun', m); });
-                    setDoc(currentDocRef, { budgetData: cloudData, timestamp: Date.now() });
-                    return; // On arrête là et on attend la réponse de Firebase avec les nouvelles données
-                }
-            }
-
-            if (docId === "perso_2026_v1" && cloudData) {
-                let needsUpdatePerso = false;
-                
-                if (cloudData['Juil'] && (!cloudData['Juil'].dettes || cloudData['Juil'].dettes.length < 3 || cloudData['Juil'].dettes[0].name !== 'Izicarte' || cloudData['Juil'].dettes[0].resteDu !== 5478)) {
-                    needsUpdatePerso = true;
-                }
-                
-                if (cloudData['Aoû'] && (!cloudData['Aoû'].dettes || cloudData['Aoû'].dettes.length < 3 || cloudData['Aoû'].dettes[0].name !== 'Izicarte' || cloudData['Aoû'].dettes[0].resteDu === 0 || cloudData['Aoû'].dettes[0].resteDu === 5478)) {
-                    needsUpdatePerso = true;
-                }
-
-                if (needsUpdatePerso) {
-                    const baseDettesJuil = [
-                        { name: 'Izicarte', occ: false, prevu: 150, reel: 150, diff: 0, resteDu: 5478, taux: 16, mensualite: 150, anticipe: 0, moisRestants: 51 },
-                        { name: 'Crédit', occ: false, prevu: 131, reel: 131, diff: 0, resteDu: 4744, taux: 0, mensualite: 131, anticipe: 0, moisRestants: 37 },
-                        { name: 'Voiture', occ: false, prevu: 250, reel: 248, diff: 2, resteDu: 12895, taux: 9, mensualite: 250, anticipe: 0, moisRestants: 66 }
-                    ];
-
-                    cloudData['Juil'].dettes = JSON.parse(JSON.stringify(baseDettesJuil));
-
-                    // Cascade Mathématique Automatique de Août à Décembre
-                    const monthsToUpdate = ['Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
-                    let currentDettes = JSON.parse(JSON.stringify(baseDettesJuil));
-
-                    monthsToUpdate.forEach(m => {
-                        currentDettes = calculateNextMonthDettes(currentDettes);
-                        if (!cloudData[m]) cloudData[m] = generateEmptyMonth('Perso', m);
-                        cloudData[m].dettes = JSON.parse(JSON.stringify(currentDettes));
-                    });
-
-                    setDoc(currentDocRef, { budgetData: cloudData, timestamp: Date.now() });
-                    return; // On arrête là et on laisse la mise à jour redescendre de Firebase
-                }
-            }
-
             if (!cloudData || Object.keys(cloudData).length === 0) {
                setDoc(currentDocRef, { budgetData: data.value, timestamp: Date.now() });
                return;
             }
             isUpdatingFromCloud = true;
             data.value = cloudData;
-            // On sauvegarde localement en ajoutant l'année pour ne pas écraser
             localStorage.setItem(`budget_${currentAccount.value}_${currentYear.value}_v1`, JSON.stringify(data.value)); 
             
             nextTick(() => {
@@ -668,55 +640,80 @@
         }
       };
 
+      // MODIFICATION CHIRURGICALE POUR LA GESTION DES CHANGEMENTS D'ANNÉE (JANVIER <- DÉCEMBRE)
       const importFromPrevious = () => {
         const currentIndex = months.indexOf(activeTab.value);
-        if (currentIndex <= 0) {
-          alert("Impossible d'importer : il n'y a pas de mois précédent.");
-          return;
+        let prevData = null;
+        let prevMonthLabel = '';
+
+        if (currentIndex > 0) {
+          // Cas classique : même année, mois d'avant
+          const prevMonth = months[currentIndex - 1];
+          prevData = data.value[prevMonth];
+          prevMonthLabel = prevMonth;
+        } else if (currentIndex === 0) {
+          // Cas Janvier : On va chercher le mois de Décembre de l'année d'avant
+          const prevYearNum = parseInt(currentYear.value) - 1;
+          const prevYearKey = `budget_${currentAccount.value}_${prevYearNum}_v1`;
+          const localPrevData = localStorage.getItem(prevYearKey);
+          
+          if (localPrevData) {
+            prevData = JSON.parse(localPrevData)['Déc'];
+            prevMonthLabel = `Décembre ${prevYearNum}`;
+          } else {
+            alert(`Impossible d'importer : Aucune donnée locale trouvée pour Décembre ${prevYearNum}. Ouvrez d'abord l'année ${prevYearNum} pour synchroniser ses données.`);
+            return;
+          }
         }
-        
-        const prevMonth = months[currentIndex - 1];
-        const prevData = data.value[prevMonth];
-        
-        if (confirm(`Importer les lignes récurrentes de ${prevMonth} vers ${activeTab.value} ?\nAttention : cela remplacera les données actuelles de ${activeTab.value}.`)) {
+
+        if (confirm(`Importer les lignes récurrentes de ${prevMonthLabel} vers ${activeTab.value} ${currentYear.value} ?\nAttention : cela remplacera les données actuelles.`)) {
           const newData = {};
           
           blocksLayout.value.forEach(blockId => {
-            newData[blockId] = prevData[blockId]
-              .filter(item => !item.occ)
-              .map(item => {
-                if (blockId === 'dettes') {
-                  // On réutilise la fonction mathématique globale
-                  return calculateNextMonthDettes([item])[0];
-                }
-
-                // C'EST ICI LE CORRECTIF POUR L'EPARGNE
-                if (blockId === 'epargne') {
-                  return {
-                    ...item,
-                    reel: 0,
-                    diff: 0,
-                    // La réserve du mois d'avant s'additionne au réel mis de côté
-                    reserve: (parseFloat(item.reserve) || 0) + (parseFloat(item.reel) || 0)
-                  };
-                }
-
-                return {
-                  ...item,
-                  reel: 0, 
-                  diff: 0
-                };
-              });
+            let filteredPrevData = ((prevData && prevData[blockId]) || []).filter(item => !item.occ);
+            
+            if (blockId === 'dettes') {
+                newData[blockId] = calculateNextMonthDettes(filteredPrevData);
+            } else if (blockId === 'epargne') {
+                newData[blockId] = calculateNextMonthEpargne(filteredPrevData);
+            } else {
+                newData[blockId] = filteredPrevData.map(item => ({ ...item, reel: 0, diff: 0 }));
+            }
           });
           
           data.value[activeTab.value] = newData;
         }
       };
 
+      // PROPAGER JUSQU'À DÉCEMBRE
+      const propagateFutureMonths = () => {
+        const currentIndex = months.indexOf(activeTab.value);
+        if (currentIndex === -1 || currentIndex === 11) {
+            alert("Vous êtes déjà en Décembre ou sur le Bilan.");
+            return;
+        }
+
+        if (confirm(`Voulez-vous propager les dettes et l'épargne de ${activeTab.value} à tous les mois suivants jusqu'en Décembre ?`)) {
+            let currentMonthData = JSON.parse(JSON.stringify(data.value[activeTab.value]));
+            
+            for (let i = currentIndex + 1; i < 12; i++) {
+                const nextMonthName = months[i];
+                if (!data.value[nextMonthName]) data.value[nextMonthName] = generateEmptyMonth(currentAccount.value, nextMonthName);
+                
+                currentMonthData.dettes = calculateNextMonthDettes(currentMonthData.dettes || []);
+                currentMonthData.epargne = calculateNextMonthEpargne(currentMonthData.epargne || []);
+                
+                data.value[nextMonthName].dettes = JSON.parse(JSON.stringify(currentMonthData.dettes));
+                data.value[nextMonthName].epargne = JSON.parse(JSON.stringify(currentMonthData.epargne));
+            }
+            alert("Propagation terminée avec succès !");
+        }
+      };
+
       const sumReel = (arr) => (arr || []).reduce((sum, item) => sum + (item.reel || 0), 0);
       const sumPrevu = (arr) => (arr || []).reduce((sum, item) => sum + (item.prevu || 0), 0);
 
-      // C'EST ICI LE CORRECTIF DE SECURITE (Pour ne pas avoir d'écran blanc)
+      // SÉCURITÉ DE CHARGEMENT ANTI-CRASH
       const totals = computed(() => {
         const d = currentData.value;
         if(!d || !d.revenus || !d.epargne || !d.fixes || !d.dettes || !d.variables) 
@@ -788,12 +785,15 @@
         return (d.epargne || []).reduce((sum, item) => sum + (item.reserve || 0), 0);
       });
 
+      // DRAG AND DROP CONSERVÉ ENTIÈREMENT
       const draggedItem = ref(null);
       const startDrag = (evt, index) => { draggedItem.value = index; };
       const onDrop = (evt, index) => {
+        if(draggedItem.value === null) return;
         const itemToMove = blocksLayout.value[draggedItem.value];
         blocksLayout.value.splice(draggedItem.value, 1);
         blocksLayout.value.splice(index, 0, itemToMove);
+        draggedItem.value = null;
       };
 
       let chartInstance = null;
@@ -917,7 +917,7 @@
         months, activeTab, data, currentData, blocksLayout, blockStyles,
         totals, totalsPrevu, annualTotals, cumulReserve, syncStatus,
         calculateDiff, addItem, removeItem, startDrag, onDrop,
-        importFromPrevious,
+        importFromPrevious, propagateFutureMonths,
         isCreditModalOpen, selectedCredit, moisRestantsCalcules,
         openAnalyseCredit, closeAnalyseCredit, renderCreditChart
       };
