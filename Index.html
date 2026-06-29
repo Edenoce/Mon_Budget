@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <!-- ANTI-CACHE POUR FORCER LES TÉLÉPHONES ET MAC À PRENDRE LE NOUVEAU CODE -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+
+  <title>Suivi Budget Mensuel & Annuel - Perso</title>
+
+  <!-- LIGNES POUR L'ICÔNE DE L'APPLICATION -->
+  <link rel="icon" type="image/png" href="icone.png">
+  <link rel="apple-touch-icon" href="icone.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f3f4f6; color: #1f2937; }
+    .card-shadow { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03); }
+    
+    .module-card {
+      background: white;
+      border-radius: 0.75rem;
+      resize: both;
+      overflow: hidden;
+      min-width: 320px;
+      min-height: 200px;
+      width: 400px;
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 6px;
+      padding-right: 6px;
+    }
+    
+    .module-card::-webkit-resizer {
+      background-color: transparent;
+      border-bottom: 2px solid #cbd5e1;
+      border-right: 2px solid #cbd5e1;
+      border-bottom-right-radius: 0.5rem;
+    }
+    
+    .drag-handle { cursor: grab; }
+    .drag-handle:active { cursor: grabbing; }
+    
+    .modules-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      align-items: flex-start;
+    }
+    
+    .table-container { flex-grow: 1; overflow-y: auto; overflow-x: hidden; }
+    input[type="number"] { -moz-appearance: textfield; }
+    input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+    /* CORRECTIF IPHONE : Auto-agrandissement des modules sur mobile */
+    @media (max-width: 768px) {
+      .module-card {
+        height: auto !important; 
+        resize: none; 
+        padding-bottom: 12px;
+      }
+      .table-container {
+        overflow-y: visible; 
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div id="app" class="max-w-[1600px] mx-auto p-4 md:p-8" v-cloak>
+  <div class="flex justify-between items-center mb-8">
+    <div>
+      <div class="flex items-center gap-4">
+        <h1 class="text-3xl font-bold text-gray-900 flex items-center">
+          Budget {{ currentAccount }}
+          <!-- SÉLECTEUR D'ANNÉE : Pour passer d'une année à l'autre sans perte de données -->
+          <select v-model="currentYear" @change="changeContext" class="ml-3 text-2xl font-black text-blue-600 bg-transparent border-b-2 border-blue-200 outline-none cursor-pointer hover:text-blue-800 transition">
+            <option value="2026">2026</option>
+            <option value="2027">2027</option>
+            <option value="2028">2028</option>
+            <option value="2029">2029</option>
+            <option value="2030">2030</option>
+          </select>
+        </h1>
+        <div class="flex bg-gray-200/60 p-1 rounded-lg">
+          <button @click="currentAccount = 'Perso'; changeContext()" :class="currentAccount === 'Perso' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'" class="px-4 py-1.5 rounded-md text-sm font-bold transition flex items-center gap-2"><i class="ph-bold ph-user"></i> Perso</button>
+          <button @click="currentAccount = 'Conjoint'; changeContext()" :class="currentAccount === 'Conjoint' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'" class="px-4 py-1.5 rounded-md text-sm font-bold transition flex items-center gap-2"><i class="ph-bold ph-user"></i> Conjoint</button>
+          <button @click="currentAccount = 'Commun'; changeContext()" :class="currentAccount === 'Commun' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'" class="px-4 py-1.5 rounded-md text-sm font-bold transition flex items-center gap-2"><i class="ph-bold ph-users"></i> Commun</button>
+        </div>
+      </div>
+      <p class="text-gray-500 mt-1">Suivi financier 
+        <span v-if="currentAccount === 'Perso'">indépendant</span>
+        <span v-else-if="currentAccount === 'Conjoint'">du conjoint</span>
+        <span v-else>partagé</span>
+      </p>
+    </div>
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2 px-4 py-2 rounded-full font-medium text-sm transition-colors duration-300"
+           :class="syncStatus === 'Synchronisé' ? 'bg-green-100 text-green-700' : (syncStatus === 'Erreur Cloud' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700')">
+        <i :class="syncStatus === 'Synchronisé' ? 'ph-fill ph-cloud-check' : 'ph-bold ph-arrows-clockwise animate-spin'"></i>
+        {{ syncStatus }}
+      </div>
+    </div>
+  </div>
+
+  <div class="flex space-x-1 overflow-x-auto bg-gray-200/50 p-1 rounded-xl mb-6 scrollbar-hide">
+    <button v-for="month in months" :key="month" @click="activeTab = month"
+            :class="['px-4 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all duration-200', 
+                     activeTab === month ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200']">
+      {{ month }}
+    </button>
+    <button @click="activeTab = 'Bilan'"
+            :class="['px-4 py-2.5 rounded-lg text-sm font-bold whitespace-nowrap ml-auto flex items-center gap-2', 
+                     activeTab === 'Bilan' ? 'bg-blue-500 text-white shadow-sm' : 'text-blue-600 hover:bg-blue-50']">
+      <i class="ph ph-chart-line-up"></i> BILAN ANNUEL
+    </button>
+  </div>
+
+  <!-- VUE MENSUELLE CLASSIQUE -->
+  <div v-if="activeTab !== 'Bilan'">
+    
+    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-8">
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-green-500">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Revenus</p>
+        <p class="text-2xl font-black text-green-600">{{ totals.revenus }} €</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-blue-500">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Épargne allouée</p>
+        <p class="text-2xl font-black text-blue-600">{{ totals.epargne }} €</p>
+      </div>
+      <div class="bg-blue-50 p-4 rounded-xl card-shadow border border-blue-100 relative overflow-hidden">
+        <i class="ph-fill ph-piggy-bank absolute -right-4 -bottom-4 text-blue-200 text-7xl opacity-50"></i>
+        <p class="text-xs font-bold text-blue-800 uppercase tracking-wider mb-1 relative z-10">Réserve Cumulée</p>
+        <p class="text-2xl font-black text-blue-900 relative z-10">{{ cumulReserve }} €</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-orange-400">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Dépenses Fixes</p>
+        <p class="text-2xl font-black text-orange-500">{{ totals.fixes }} €</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-yellow-400">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Prêts & Dettes</p>
+        <p class="text-2xl font-black text-yellow-500">{{ totals.dettes }} €</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-purple-400">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Variables</p>
+        <p class="text-2xl font-black text-purple-500">{{ totals.variables }} €</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-gray-800">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Reste à vivre</p>
+        <p class="text-2xl font-black text-gray-900">{{ totals.resteAVivre }} €</p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+      <div class="lg:col-span-2 bg-white rounded-xl card-shadow overflow-hidden">
+        <div class="bg-[#242A38] text-white p-4 flex justify-between items-center">
+          <div class="flex items-center gap-3">
+            <i class="ph ph-wallet text-xl"></i>
+            <h2 class="font-bold tracking-wide uppercase text-sm">VUE D'ENSEMBLE {{ activeTab.toUpperCase() }}</h2>
+          </div>
+          <button v-if="activeTab !== 'Jan' && activeTab !== 'Bilan'" @click="importFromPrevious" class="text-xs bg-blue-500 hover:bg-blue-600 px-3 py-1.5 rounded font-medium flex items-center gap-2 transition card-shadow">
+            <i class="ph-bold ph-magic-wand"></i> Importer récurrences
+          </button>
+        </div>
+        <div class="p-6">
+          <table class="w-full text-left">
+            <thead>
+              <tr class="text-gray-400 text-sm border-b border-gray-100">
+                <th class="pb-3 font-normal"></th>
+                <th class="pb-3 font-normal text-right">Prévu</th>
+                <th class="pb-3 font-normal text-right">Dépensé (Réel)</th>
+                <th class="pb-3 font-normal text-right">Différence</th>
+              </tr>
+            </thead>
+            <tbody class="text-gray-700">
+              <tr class="border-b border-gray-50">
+                <td class="py-4 font-semibold">Total Revenus</td>
+                <td class="py-4 text-right text-gray-400">{{ totalsPrevu.revenus }} €</td>
+                <td class="py-4 text-right font-bold">{{ totals.revenus }} €</td>
+                <td class="py-4 text-right font-medium" :class="totals.revenus - totalsPrevu.revenus >= 0 ? 'text-green-500' : 'text-red-500'">
+                  <span v-if="totals.revenus - totalsPrevu.revenus > 0">+</span>{{ totals.revenus - totalsPrevu.revenus }} €
+                </td>
+              </tr>
+              <tr class="border-b border-gray-50">
+                <td class="py-4 font-semibold">Total Sorties <span class="text-xs font-normal text-gray-400">(Dépenses + Épargne)</span></td>
+                <td class="py-4 text-right text-gray-400">{{ totalsPrevu.sorties }} €</td>
+                <td class="py-4 text-right font-bold">{{ totals.sorties }} €</td>
+                <td class="py-4 text-right font-medium" :class="totalsPrevu.sorties - totals.sorties >= 0 ? 'text-green-500' : 'text-red-500'">
+                  <span v-if="totalsPrevu.sorties - totals.sorties > 0">+</span>{{ totalsPrevu.sorties - totals.sorties }} €
+                </td>
+              </tr>
+              <tr class="bg-gray-50/50">
+                <td class="py-4 px-2 font-bold text-gray-900">BILAN (Reste à vivre)</td>
+                <td class="py-4 px-2 text-right text-gray-500">{{ totalsPrevu.resteAVivre }} €</td>
+                <td class="py-4 px-2 text-right font-black text-lg text-gray-900">{{ totals.resteAVivre }} €</td>
+                <td class="py-4 px-2 text-right font-bold text-lg" :class="totals.resteAVivre - totalsPrevu.resteAVivre >= 0 ? 'text-green-500' : 'text-red-500'">
+                  <span v-if="totals.resteAVivre - totalsPrevu.resteAVivre > 0">+</span>{{ totals.resteAVivre - totalsPrevu.resteAVivre }} €
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl card-shadow p-6 flex flex-col items-center justify-center">
+        <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-6">Répartition des sorties</h3>
+        <div class="relative w-48 h-48">
+          <canvas id="expensesChart"></canvas>
+        </div>
+        <div class="flex flex-wrap justify-center gap-3 mt-6 text-xs text-gray-500">
+          <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-400"></span> Épargne Allouée</div>
+          <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-orange-400"></span> Dépenses Fixes</div>
+          <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-yellow-400"></span> Prêts & Dettes</div>
+          <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-400"></span> Variables</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modules-container" @dragover.prevent>
+      <div v-for="(blockId, index) in blocksLayout" :key="blockId" 
+           class="module-card card-shadow border border-gray-100"
+           draggable="true" 
+           @dragstart="startDrag($event, index)" 
+           @drop="onDrop($event, index)">
+        
+        <div class="drag-handle p-3 rounded-t-xl text-white font-bold tracking-wide text-sm flex justify-between items-center"
+             :class="blockStyles[blockId].bg">
+          <div class="flex items-center gap-2">
+            <i class="ph ph-list text-white/70"></i>
+            {{ blockStyles[blockId].title }}
+          </div>
+        </div>
+
+        <div class="table-container p-3">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-gray-400 text-[10px] uppercase tracking-wider">
+                <th class="pb-2 font-semibold">Catégorie</th>
+                <th class="pb-2 font-semibold text-center" title="Occasionnel (Ne sera pas copié au mois suivant)">Occ.</th>
+                <th class="pb-2 font-semibold text-right">Prévu</th>
+                <th class="pb-2 font-semibold text-right">Réel</th>
+                <th class="pb-2 font-semibold text-right">Diff.</th>
+                <th v-if="blockId === 'epargne'" class="pb-2 font-semibold text-right text-blue-600">Réserve</th>
+                <th v-if="blockId === 'epargne'" class="pb-2 font-semibold text-right text-blue-600">Taux(%)</th>
+                <th v-if="blockId === 'epargne'" class="pb-2 font-semibold text-right text-blue-600">Gain (1 an)</th>
+                
+                <th v-if="blockId === 'dettes'" class="pb-2 font-semibold text-right text-yellow-600">Reste Dû</th>
+                <th v-if="blockId === 'dettes'" class="pb-2 font-semibold text-right text-yellow-600" title="Mois restants à payer">Mois</th>
+                <th></th> 
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(item, itemIndex) in currentData[blockId]" :key="itemIndex" 
+                  class="border-b border-gray-50 hover:bg-gray-50/50 group">
+                <td class="py-2">
+                  <div class="flex items-center gap-2">
+                    <i v-if="blockId === 'dettes'" class="ph-fill ph-bank text-blue-400 text-lg cursor-pointer hover:text-blue-600 transition" title="Analyser le crédit" @click="openAnalyseCredit(item)"></i>
+                    <input type="text" v-model="item.name" class="w-24 bg-transparent outline-none font-medium text-gray-700" placeholder="Nom...">
+                  </div>
+                </td>
+                <td class="py-2 text-center">
+                  <input type="checkbox" v-model="item.occ" title="Cocher si c'est un extra pour ce mois-ci uniquement" class="rounded text-blue-500 focus:ring-blue-500 cursor-pointer">
+                </td>
+                <td class="py-2 text-right">
+                  <div class="flex items-center justify-end gap-1">
+                    <input type="number" v-model="item.prevu" class="w-14 bg-gray-50 rounded px-1 text-right outline-none focus:ring-1 focus:ring-blue-400">
+                    <span class="text-gray-400 text-xs">€</span>
+                  </div>
+                </td>
+                <td class="py-2 text-right">
+                  <div class="flex items-center justify-end gap-1">
+                    <input type="number" v-model="item.reel" class="w-14 bg-gray-50 rounded px-1 text-right font-bold outline-none focus:ring-1 focus:ring-blue-400">
+                    <span class="text-gray-400 text-xs">€</span>
+                  </div>
+                </td>
+                <td class="py-2 text-right text-xs font-semibold" 
+                    :class="calculateDiff(item.prevu, item.reel, blockId) >= 0 ? 'text-green-500' : 'text-red-500'">
+                  {{ calculateDiff(item.prevu, item.reel, blockId) }}
+                </td>
+                
+                <td v-if="blockId === 'epargne'" class="py-2 text-right">
+                  <div class="flex items-center justify-end gap-1">
+                    <input type="number" v-model="item.reserve" class="w-14 bg-blue-50 rounded px-1 text-right text-blue-700 font-bold outline-none focus:ring-1 focus:ring-blue-400">
+                  </div>
+                </td>
+
+                <td v-if="blockId === 'epargne'" class="py-2 text-right">
+                  <div class="flex items-center justify-end gap-1">
+                    <input type="number" step="0.1" v-model="item.taux" class="w-12 bg-blue-50 rounded px-1 text-right text-blue-700 outline-none focus:ring-1 focus:ring-blue-400">
+                  </div>
+                </td>
+                <td v-if="blockId === 'epargne'" class="py-2 text-right text-xs font-bold text-blue-600">
+                  +{{ ((item.reserve || 0) * ((item.taux || 0) / 100)).toFixed(2) }} €
+                </td>
+
+                <td v-if="blockId === 'dettes'" class="py-2 text-right">
+                  <div class="flex items-center justify-end gap-1">
+                    <input type="number" v-model="item.resteDu" class="w-16 bg-yellow-50 rounded px-1 text-right text-yellow-700 font-bold outline-none focus:ring-1 focus:ring-yellow-400">
+                  </div>
+                </td>
+
+                <td v-if="blockId === 'dettes'" class="py-2 text-right">
+                  <div class="flex items-center justify-end gap-1">
+                    <input type="number" v-model="item.moisRestants" class="w-10 bg-yellow-50 rounded px-1 text-right text-yellow-700 font-bold outline-none focus:ring-1 focus:ring-yellow-400">
+                  </div>
+                </td>
+
+                <td class="py-2 text-right pr-1">
+                  <button @click="removeItem(blockId, itemIndex)" class="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <i class="ph ph-trash"></i>
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          
+          <button @click="addItem(blockId)" class="w-full mt-3 py-2 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 text-xs font-semibold hover:border-gray-300 hover:text-gray-500 transition-colors flex items-center justify-center gap-1">
+            <i class="ph-bold ph-plus"></i> Ajouter une ligne
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- VUE : BILAN ANNUEL -->
+  <div v-if="activeTab === 'Bilan'" class="animate-fade-in">
+    <div class="bg-white rounded-xl card-shadow p-8 text-center mb-8">
+      <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 text-blue-500 mb-4">
+        <i class="ph-bold ph-chart-line-up text-3xl"></i>
+      </div>
+      <h2 class="text-2xl font-bold text-gray-900 mb-2">Bilan Annuel {{ currentAccount }} ({{ currentYear }})</h2>
+      <p class="text-gray-500 max-w-lg mx-auto">Voici le résumé de toutes vos finances sur l'année complète. Ces chiffres cumulent les données réelles saisies de Janvier à Décembre.</p>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-8">
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-green-500">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Total Revenus</p>
+        <p class="text-2xl font-black text-green-600">{{ annualTotals.revenus }} €</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-blue-500">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Total Épargné</p>
+        <p class="text-2xl font-black text-blue-600">{{ annualTotals.epargne }} €</p>
+      </div>
+      <div class="bg-blue-50 p-4 rounded-xl card-shadow border border-blue-100">
+        <p class="text-xs font-bold text-blue-800 uppercase tracking-wider mb-1">Réserve (Max)</p>
+        <p class="text-2xl font-black text-blue-900">{{ cumulReserve }} €</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-orange-400">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Total Fixes</p>
+        <p class="text-2xl font-black text-orange-500">{{ annualTotals.fixes }} €</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-yellow-400">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Total Dettes</p>
+        <p class="text-2xl font-black text-yellow-500">{{ annualTotals.dettes }} €</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-purple-400">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Total Variables</p>
+        <p class="text-2xl font-black text-purple-500">{{ annualTotals.variables }} €</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-gray-800">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Reste Cumulé</p>
+        <p class="text-2xl font-black text-gray-900">{{ annualTotals.resteAVivre }} €</p>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="isCreditModalOpen" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-opacity">
+    <div class="bg-white rounded-2xl w-full max-w-3xl overflow-hidden card-shadow flex flex-col">
+      <div class="bg-[#E3C567] p-4 flex justify-between items-center text-white">
+        <div class="flex items-center gap-3">
+          <i class="ph-fill ph-bank text-2xl"></i>
+          <div>
+            <h2 class="font-bold text-lg leading-tight">Analyse du Crédit : {{ selectedCredit.name || 'Nouveau' }}</h2>
+            <p class="text-xs text-white/80">Suivi et projection du remboursement</p>
+          </div>
+        </div>
+        <button @click="closeAnalyseCredit" class="hover:bg-white/20 p-2 rounded-full transition"><i class="ph-bold ph-x text-xl"></i></button>
+      </div>
+
+      <div class="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="md:col-span-1 space-y-4">
+          <div>
+            <label class="text-xs font-bold text-gray-500 uppercase">Capital restant dû (€)</label>
+            <input type="number" v-model="selectedCredit.resteDu" @input="renderCreditChart" class="w-full mt-1 bg-gray-50 border border-gray-200 rounded-lg p-2 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-[#E3C567]">
+          </div>
+          <div>
+            <label class="text-xs font-bold text-gray-500 uppercase">Mensualité payée (€/mois)</label>
+            <input type="number" v-model="selectedCredit.mensualite" @input="renderCreditChart" class="w-full mt-1 bg-gray-50 border border-gray-200 rounded-lg p-2 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-[#E3C567]">
+          </div>
+          <div>
+            <label class="text-xs font-bold text-gray-500 uppercase">Taux d'intérêt annuel (%)</label>
+            <input type="number" step="0.1" v-model="selectedCredit.taux" @input="renderCreditChart" class="w-full mt-1 bg-gray-50 border border-gray-200 rounded-lg p-2 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-[#E3C567]">
+          </div>
+          
+          <div>
+            <label class="text-xs font-bold text-green-600 uppercase">Remboursement anticipé (€)</label>
+            <input type="number" v-model="selectedCredit.anticipe" @input="renderCreditChart" class="w-full mt-1 bg-green-50 border border-green-200 rounded-lg p-2 font-bold text-green-700 outline-none focus:ring-2 focus:ring-green-400">
+          </div>
+          
+          <div class="mt-6 p-4 bg-gray-800 rounded-xl text-center">
+            <p class="text-xs text-gray-400 font-medium uppercase mb-1">Durée théorique estimée :</p>
+            <p class="text-3xl font-black text-[#E3C567]">{{ moisRestantsCalcules }} <span class="text-lg font-bold">Mois</span></p>
+            <p class="text-xs text-gray-400 mt-2">Ce calcul met à jour le graphique</p>
+          </div>
+        </div>
+
+        <div class="md:col-span-2 bg-gray-50 rounded-xl border border-gray-100 p-4 flex flex-col">
+          <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Évolution de la dette</h3>
+          <div class="relative flex-grow min-h-[250px]">
+            <canvas id="creditChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+  import { createApp, ref, computed, watch, onMounted, nextTick } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.js';
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCC2TZKZFtcPX4h4S5iVEz7uV0gu_iXNtk",
+    authDomain: "mon-budget26.firebaseapp.com",
+    projectId: "mon-budget26",
+    storageBucket: "mon-budget26.firebasestorage.app",
+    messagingSenderId: "758370591404",
+    appId: "1:758370591404:web:e0a81070050bb552617509"
+  };
+
+  const appFirebase = initializeApp(firebaseConfig);
+  const db = getFirestore(appFirebase);
+
+  createApp({
+    setup() {
+      const currentAccount = ref('Perso');
+      const currentYear = ref('2026'); // NOUVEAU : Sélecteur d'année
+      let unsubscribeSnapshot = null;
+      let saveTimeout;
+      let isInitialLoad = true;
+
+      // NOUVEAU : L'identifiant de la BDD s'adapte à l'année !
+      const getDocId = () => {
+        return `${currentAccount.value.toLowerCase()}_${currentYear.value}_v1`;
+      };
+
+      const months = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+      const activeTab = ref('Juil');
+      const syncStatus = ref('Connexion...');
+      let isUpdatingFromCloud = false;
+      
+      const isCreditModalOpen = ref(false);
+      const selectedCredit = ref(null);
+      const moisRestantsCalcules = ref(0);
+      let creditChartInstance = null;
+
+      const blocksLayout = ref(['revenus', 'epargne', 'fixes', 'dettes', 'variables']);
+      const blockStyles = {
+        revenus: { title: 'REVENUS', bg: 'bg-[#7EAC79]' },
+        epargne: { title: 'ÉPARGNE', bg: 'bg-[#6484D4]' },
+        fixes: { title: 'DÉPENSES FIXES', bg: 'bg-[#E59974]' },
+        dettes: { title: 'PRÊTS / DETTES', bg: 'bg-[#E3C567]' },
+        variables: { title: 'VARIABLES', bg: 'bg-[#9C84C4]' }
+      };
+
+      // --- LE MOTEUR MATHÉMATIQUE DES CRÉDITS ---
+      const calculateNextMonthDettes = (prevDettes) => {
+        return prevDettes.map(item => {
+            let nouveauResteDu = parseFloat(item.resteDu) || 0;
+            let nouveauxMoisRestants = parseInt(item.moisRestants) || 0;
+            const payePrecedemment = item.reel > 0 ? parseFloat(item.reel) : parseFloat(item.prevu);
+            const taux = parseFloat(item.taux) || 0;
+
+            if (nouveauResteDu > 0 && payePrecedemment > 0) {
+                const interetsMois = nouveauResteDu * (taux / 100 / 12);
+                const capitalRembourse = payePrecedemment - interetsMois;
+                if (capitalRembourse > 0) {
+                    nouveauResteDu = Math.max(0, nouveauResteDu - capitalRembourse);
+                    nouveauResteDu = Math.round(nouveauResteDu * 100) / 100;
+                }
+            }
+
+            if (nouveauxMoisRestants > 0 && payePrecedemment > 0) {
+                nouveauxMoisRestants = Math.max(0, nouveauxMoisRestants - 1);
+            }
+
+            return {
+                ...item,
+                reel: 0, // Remis à 0 pour le mois suivant
+                diff: 0,
+                resteDu: nouveauResteDu,
+                moisRestants: nouveauxMoisRestants
+            };
+        });
+      };
+
+      // Modèles de données
+      const communTemplateJanSep = {
+        revenus: [{ name: 'Geoffrey', occ: false, prevu: 900, reel: 900, diff: 0 }, { name: 'Océane', occ: false, prevu: 550, reel: 550, diff: 0 }, { name: 'CAF', occ: false, prevu: 368, reel: 368, diff: 0 }, { name: 'CMG', occ: false, prevu: 855, reel: 855, diff: 0 }],
+        epargne: [],
+        fixes: [{ name: 'Loyer', occ: false, prevu: 750, reel: 750, diff: 0 }, { name: 'Crèche', occ: false, prevu: 1373, reel: 1373, diff: 0 }, { name: 'Engie', occ: false, prevu: 188, reel: 188, diff: 0 }, { name: 'Véolia', occ: false, prevu: 41, reel: 41, diff: 0 }, { name: 'GMF', occ: false, prevu: 159, reel: 159, diff: 0 }, { name: 'Téléphonie', occ: false, prevu: 99, reel: 99, diff: 0 }, { name: 'Canal +', occ: false, prevu: 59, reel: 59, diff: 0 }],
+        dettes: [], variables: []
+      };
+
+      const communTemplateOctDec = {
+        revenus: [{ name: 'Geoffrey', occ: false, prevu: 900, reel: 900, diff: 0 }, { name: 'Océane', occ: false, prevu: 550, reel: 550, diff: 0 }, { name: 'CAF', occ: false, prevu: 368, reel: 368, diff: 0 }],
+        epargne: [],
+        fixes: [{ name: 'Loyer', occ: false, prevu: 750, reel: 750, diff: 0 }, { name: 'Ecole NDC', occ: false, prevu: 99, reel: 99, diff: 0 }, { name: 'Engie', occ: false, prevu: 188, reel: 188, diff: 0 }, { name: 'Véolia', occ: false, prevu: 41, reel: 41, diff: 0 }, { name: 'GMF', occ: false, prevu: 159, reel: 159, diff: 0 }, { name: 'Téléphonie', occ: false, prevu: 99, reel: 99, diff: 0 }, { name: 'Canal +', occ: false, prevu: 59, reel: 59, diff: 0 }],
+        dettes: [], variables: []
+      };
+
+      const generateEmptyMonth = (acc, monthName = '') => {
+        if (acc === 'Commun') {
+           const janSep = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Aoû', 'Sep'];
+           // Le modèle de 2026 est spécifique. Si on passe en 2027, on garde le modèle Ecole par défaut.
+           if (currentYear.value === '2026' && janSep.includes(monthName)) { return JSON.parse(JSON.stringify(communTemplateJanSep)); }
+           return JSON.parse(JSON.stringify(communTemplateOctDec));
+        }
+
+        return {
+          revenus: [{ name: 'Salaire', occ: false, prevu: 1526, reel: 1526, diff: 0 }],
+          epargne: [{ name: 'LEP', occ: false, prevu: 20, reel: 20, diff: 0, reserve: 0, taux: 0 }],
+          fixes: [{ name: 'Loyer', occ: false, prevu: 450, reel: 450, diff: 0 }],
+          dettes: [
+            { name: 'Izicarte', occ: false, prevu: 150, reel: 150, diff: 0, resteDu: 0, taux: 0, mensualite: 150, anticipe: 0, moisRestants: 0 },
+            { name: 'Crédit', occ: false, prevu: 131, reel: 131, diff: 0, resteDu: 0, taux: 0, mensualite: 131, anticipe: 0, moisRestants: 0 },
+            { name: 'Voiture', occ: false, prevu: 250, reel: 248, diff: 2, resteDu: 0, taux: 0, mensualite: 250, anticipe: 0, moisRestants: 0 }
+          ],
+          variables: [{ name: 'Courses', occ: false, prevu: 200, reel: 0, diff: 0 }]
+        };
+      };
+
+      const data = ref({});
+      
+      const setupFirebaseListener = () => {
+        if (unsubscribeSnapshot) unsubscribeSnapshot();
+        syncStatus.value = 'Connexion...';
+        
+        const docId = getDocId();
+        const currentDocRef = doc(db, "budgets_officiels", docId);
+
+        unsubscribeSnapshot = onSnapshot(currentDocRef, (docSnap) => {
+          if (docSnap.exists()) {
+            let cloudData = docSnap.data().budgetData;
+            
+            // AUTO-MISE A JOUR DE 2026 POUR COMMUN ET PERSO
+            if (docId === "commun_2026_v1" && cloudData) {
+                let needsUpdate = false;
+                if (cloudData['Jan'] && (!cloudData['Jan'].revenus[0] || cloudData['Jan'].revenus[0].name === 'Salaire')) needsUpdate = true;
+                if (cloudData['Oct'] && !cloudData['Oct'].fixes.some(f => f.name === 'Ecole NDC')) needsUpdate = true;
+                if (needsUpdate) {
+                    months.forEach(m => { cloudData[m] = generateEmptyMonth('Commun', m); });
+                    setDoc(currentDocRef, { budgetData: cloudData, timestamp: Date.now() });
+                    return; // On arrête là et on attend la réponse de Firebase avec les nouvelles données
+                }
+            }
+
+            if (docId === "perso_2026_v1" && cloudData) {
+                let needsUpdatePerso = false;
+                
+                // Si Juillet n'a pas les bonnes données de base
+                if (cloudData['Juil'] && (!cloudData['Juil'].dettes || cloudData['Juil'].dettes.length < 3 || cloudData['Juil'].dettes[0].name !== 'Izicarte' || cloudData['Juil'].dettes[0].resteDu !== 5478)) {
+                    needsUpdatePerso = true;
+                }
+                
+                // Si la cascade vers Août n'a pas été faite
+                if (cloudData['Aoû'] && (!cloudData['Aoû'].dettes || cloudData['Aoû'].dettes.length < 3 || cloudData['Aoû'].dettes[0].name !== 'Izicarte' || cloudData['Aoû'].dettes[0].resteDu === 0 || cloudData['Aoû'].dettes[0].resteDu === 5478)) {
+                    needsUpdatePerso = true;
+                }
+
+                if (needsUpdatePerso) {
+                    const baseDettesJuil = [
+                        { name: 'Izicarte', occ: false, prevu: 150, reel: 150, diff: 0, resteDu: 5478, taux: 16, mensualite: 150, anticipe: 0, moisRestants: 51 },
+                        { name: 'Crédit', occ: false, prevu: 131, reel: 131, diff: 0, resteDu: 4744, taux: 0, mensualite: 131, anticipe: 0, moisRestants: 37 },
+                        { name: 'Voiture', occ: false, prevu: 250, reel: 248, diff: 2, resteDu: 12895, taux: 9, mensualite: 250, anticipe: 0, moisRestants: 66 }
+                    ];
+
+                    cloudData['Juil'].dettes = JSON.parse(JSON.stringify(baseDettesJuil));
+
+                    // Cascade Mathématique Automatique de Août à Décembre
+                    const monthsToUpdate = ['Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+                    let currentDettes = JSON.parse(JSON.stringify(baseDettesJuil));
+
+                    monthsToUpdate.forEach(m => {
+                        currentDettes = calculateNextMonthDettes(currentDettes);
+                        if (!cloudData[m]) cloudData[m] = generateEmptyMonth('Perso', m);
+                        cloudData[m].dettes = JSON.parse(JSON.stringify(currentDettes));
+                    });
+
+                    setDoc(currentDocRef, { budgetData: cloudData, timestamp: Date.now() });
+                    return; // On arrête là et on laisse la mise à jour redescendre de Firebase
+                }
+            }
+
+            if (!cloudData || Object.keys(cloudData).length === 0) {
+               setDoc(currentDocRef, { budgetData: data.value, timestamp: Date.now() });
+               return;
+            }
+            isUpdatingFromCloud = true;
+            data.value = cloudData;
+            // On sauvegarde localement en ajoutant l'année pour ne pas écraser
+            localStorage.setItem(`budget_${currentAccount.value}_${currentYear.value}_v1`, JSON.stringify(data.value)); 
+            
+            nextTick(() => {
+              syncStatus.value = 'Synchronisé';
+              updateChart();
+              setTimeout(() => { isUpdatingFromCloud = false; }, 1000); 
+            });
+          } else {
+            syncStatus.value = 'Création Cloud...';
+            setDoc(currentDocRef, { budgetData: data.value, timestamp: Date.now() })
+              .then(() => syncStatus.value = 'Synchronisé');
+          }
+        });
+      };
+
+      // NOUVEAU : Fonction unique pour charger les données (quand on change d'année ou de compte)
+      const loadContextData = () => {
+        isInitialLoad = true;
+        const localData = localStorage.getItem(`budget_${currentAccount.value}_${currentYear.value}_v1`);
+        if (localData) {
+          data.value = JSON.parse(localData);
+        } else {
+          months.forEach(m => data.value[m] = generateEmptyMonth(currentAccount.value, m));
+        }
+      };
+
+      const changeContext = () => {
+        loadContextData();
+        setupFirebaseListener();
+        updateChart();
+      };
+
+      watch(data, (newVal) => {
+        if (isUpdatingFromCloud) {
+          clearTimeout(saveTimeout);
+          return; 
+        }
+        
+        localStorage.setItem(`budget_${currentAccount.value}_${currentYear.value}_v1`, JSON.stringify(newVal));
+        updateChart();
+
+        if (isInitialLoad) {
+          isInitialLoad = false;
+          return;
+        }
+
+        syncStatus.value = 'Sauvegarde...';
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+          const docId = getDocId();
+          setDoc(doc(db, "budgets_officiels", docId), { budgetData: newVal, timestamp: Date.now() }, { merge: true })
+            .then(() => { syncStatus.value = 'Synchronisé'; })
+            .catch(() => { syncStatus.value = 'Erreur Cloud'; });
+        }, 1500);
+      }, { deep: true });
+
+      const currentData = computed(() => data.value[activeTab.value]);
+
+      const calculateDiff = (prevu, reel, type) => type === 'revenus' ? (reel || 0) - (prevu || 0) : (prevu || 0) - (reel || 0);
+      
+      const addItem = (blockId) => {
+        currentData.value[blockId].push({ name: '', occ: false, prevu: 0, reel: 0, diff: 0, reserve: 0, resteDu: 0, taux: 0, mensualite: 0, anticipe: 0, moisRestants: 0 });
+      };
+
+      const removeItem = (blockId, index) => {
+        if(confirm("Supprimer cette ligne pour ce mois ?")) {
+          currentData.value[blockId].splice(index, 1);
+        }
+      };
+
+      const importFromPrevious = () => {
+        const currentIndex = months.indexOf(activeTab.value);
+        if (currentIndex <= 0) {
+          alert("Impossible d'importer : il n'y a pas de mois précédent.");
+          return;
+        }
+        
+        const prevMonth = months[currentIndex - 1];
+        const prevData = data.value[prevMonth];
+        
+        if (confirm(`Importer les lignes récurrentes de ${prevMonth} vers ${activeTab.value} ?\nAttention : cela remplacera les données actuelles de ${activeTab.value}.`)) {
+          const newData = {};
+          
+          blocksLayout.value.forEach(blockId => {
+            newData[blockId] = prevData[blockId]
+              .filter(item => !item.occ)
+              .map(item => {
+                if (blockId === 'dettes') {
+                  // On réutilise la fonction mathématique globale
+                  return calculateNextMonthDettes([item])[0];
+                }
+
+                return {
+                  ...item,
+                  reel: 0, 
+                  diff: 0
+                };
+              });
+          });
+          
+          data.value[activeTab.value] = newData;
+        }
+      };
+
+      const sumReel = (arr) => (arr || []).reduce((sum, item) => sum + (item.reel || 0), 0);
+      const sumPrevu = (arr) => (arr || []).reduce((sum, item) => sum + (item.prevu || 0), 0);
+
+      const totals = computed(() => {
+        const d = currentData.value;
+        if(!d) return { revenus: 0, epargne: 0, fixes: 0, dettes: 0, variables: 0, sorties: 0, resteAVivre: 0 };
+        const rev = sumReel(d.revenus);
+        const ep = sumReel(d.epargne);
+        const fix = sumReel(d.fixes);
+        const det = sumReel(d.dettes);
+        const varb = sumReel(d.variables);
+        return {
+          revenus: rev, epargne: ep, fixes: fix, dettes: det, variables: varb,
+          sorties: ep + fix + det + varb,
+          resteAVivre: rev - (ep + fix + det + varb)
+        };
+      });
+
+      const totalsPrevu = computed(() => {
+        const d = currentData.value;
+        if(!d) return { revenus: 0, sorties: 0, resteAVivre: 0 };
+        const rev = sumPrevu(d.revenus);
+        const ep = sumPrevu(d.epargne);
+        const fix = sumPrevu(d.fixes);
+        const det = sumPrevu(d.dettes);
+        const varb = sumPrevu(d.variables);
+        return {
+          revenus: rev,
+          sorties: ep + fix + det + varb,
+          resteAVivre: rev - (ep + fix + det + varb)
+        };
+      });
+
+      const annualTotals = computed(() => {
+        let rev = 0, ep = 0, fix = 0, det = 0, varb = 0;
+        months.forEach(m => {
+          const d = data.value[m];
+          if (d) {
+            rev += sumReel(d.revenus);
+            ep += sumReel(d.epargne);
+            fix += sumReel(d.fixes);
+            det += sumReel(d.dettes);
+            varb += sumReel(d.variables);
+          }
+        });
+        return {
+          revenus: rev, epargne: ep, fixes: fix, dettes: det, variables: varb,
+          sorties: ep + fix + det + varb,
+          resteAVivre: rev - (ep + fix + det + varb)
+        };
+      });
+
+      const cumulReserve = computed(() => {
+        if (activeTab.value === 'Bilan') {
+            let maxReserve = 0;
+            months.forEach(m => {
+                const d = data.value[m];
+                if (d) {
+                    const monthRes = (d.epargne || []).reduce((sum, item) => sum + (item.reserve || 0), 0);
+                    if (monthRes > maxReserve) maxReserve = monthRes;
+                }
+            });
+            return maxReserve;
+        }
+        
+        const d = currentData.value;
+        if(!d) return 0;
+        return (d.epargne || []).reduce((sum, item) => sum + (item.reserve || 0), 0);
+      });
+
+      const draggedItem = ref(null);
+      const startDrag = (evt, index) => { draggedItem.value = index; };
+      const onDrop = (evt, index) => {
+        const itemToMove = blocksLayout.value[draggedItem.value];
+        blocksLayout.value.splice(draggedItem.value, 1);
+        blocksLayout.value.splice(index, 0, itemToMove);
+      };
+
+      let chartInstance = null;
+      const updateChart = () => {
+        nextTick(() => {
+          if (activeTab.value === 'Bilan') return;
+          const ctx = document.getElementById('expensesChart');
+          if (!ctx) return;
+          
+          if (chartInstance) chartInstance.destroy();
+          
+          const t = totals.value;
+          chartInstance = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+              labels: ['Épargne', 'Fixes', 'Dettes', 'Variables'],
+              datasets: [{
+                data: [t.epargne, t.fixes, t.dettes, t.variables],
+                backgroundColor: ['#60A5FA', '#FB923C', '#FBBF24', '#C084FC'],
+                borderWidth: 0,
+                hoverOffset: 4
+              }]
+            },
+            options: { cutout: '75%', plugins: { legend: { display: false }, tooltip: { enabled: true } }, responsive: true, maintainAspectRatio: false }
+          });
+        });
+      };
+
+      const openAnalyseCredit = (item) => {
+        if (item.taux === undefined) item.taux = 0;
+        if (item.mensualite === undefined) item.mensualite = item.prevu || 0;
+        if (item.resteDu === undefined) item.resteDu = 0;
+        if (item.anticipe === undefined) item.anticipe = 0;
+        if (item.moisRestants === undefined) item.moisRestants = 0;
+        
+        selectedCredit.value = item;
+        isCreditModalOpen.value = true;
+        
+        nextTick(() => { renderCreditChart(); });
+      };
+
+      const closeAnalyseCredit = () => {
+        isCreditModalOpen.value = false;
+        if (creditChartInstance) creditChartInstance.destroy();
+      };
+
+      const renderCreditChart = () => {
+        const ctx = document.getElementById('creditChart');
+        if (!ctx) return;
+        if (creditChartInstance) creditChartInstance.destroy();
+
+        let resteBase = parseFloat(selectedCredit.value.resteDu) || 0;
+        let anticipeVal = parseFloat(selectedCredit.value.anticipe) || 0;
+        let reste = Math.max(0, resteBase - anticipeVal);
+        
+        const taux = parseFloat(selectedCredit.value.taux) || 0;
+        const mensualite = parseFloat(selectedCredit.value.mensualite) || 0;
+
+        const dataPoints = [reste];
+        const labels = ['Aujourd\'hui'];
+        let mois = 0;
+
+        if (mensualite > 0) {
+          while (reste > 0 && mois < 360) {
+            const interets = reste * (taux / 100 / 12);
+            const capitalRembourse = mensualite - interets;
+
+            if (capitalRembourse <= 0) break; 
+
+            reste -= capitalRembourse;
+            if (reste < 0) reste = 0;
+
+            mois++;
+            if (mois % 3 === 0 || reste === 0) {
+              dataPoints.push(Math.round(reste));
+              labels.push(`M+${mois}`);
+            }
+          }
+        }
+        
+        moisRestantsCalcules.value = mois;
+
+        creditChartInstance = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: 'Capital restant à payer (€)',
+              data: dataPoints,
+              borderColor: '#E3C567',
+              backgroundColor: 'rgba(227, 197, 103, 0.2)',
+              borderWidth: 3,
+              pointRadius: 0,
+              pointHitRadius: 10,
+              fill: true,
+              tension: 0.4
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              y: { beginAtZero: true, grid: { color: '#f3f4f6' } },
+              x: { grid: { display: false } }
+            }
+          }
+        });
+      };
+
+      onMounted(() => { 
+        loadContextData();
+        setupFirebaseListener(); 
+        updateChart(); 
+      });
+      
+      watch(activeTab, () => { updateChart(); });
+
+      return {
+        currentAccount, currentYear, changeContext, 
+        months, activeTab, data, currentData, blocksLayout, blockStyles,
+        totals, totalsPrevu, annualTotals, cumulReserve, syncStatus,
+        calculateDiff, addItem, removeItem, startDrag, onDrop,
+        importFromPrevious,
+        isCreditModalOpen, selectedCredit, moisRestantsCalcules,
+        openAnalyseCredit, closeAnalyseCredit, renderCreditChart
+      };
+    }
+  }).mount('#app');
+</script>
+</body>
+</html>
