@@ -4,14 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   
-  <!-- ANTI-CACHE POUR FORCER LES TÉLÉPHONES ET MAC À PRENDRE LE NOUVEAU CODE -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
   <title>Suivi Budget Mensuel & Annuel - Perso</title>
 
-  <!-- LIGNES POUR L'ICÔNE DE L'APPLICATION -->
   <link rel="icon" type="image/png" href="logo.png">
   <link rel="apple-touch-icon" href="logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -258,7 +256,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(item, itemIndex) in currentData[blockId]" :key="itemIndex" 
+              <tr v-for="(item, itemIndex) in (currentData[blockId] || [])" :key="itemIndex" 
                   class="border-b border-gray-50 hover:bg-gray-50/50 group">
                 <td class="py-2">
                   <div class="flex items-center gap-2">
@@ -330,7 +328,6 @@
     </div>
   </div>
 
-  <!-- VUE : BILAN ANNUEL -->
   <div v-if="activeTab === 'Bilan'" class="animate-fade-in">
     <div class="bg-white rounded-xl card-shadow p-8 text-center mb-8">
       <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 text-blue-500 mb-4">
@@ -472,8 +469,10 @@
         variables: { title: 'VARIABLES', bg: 'bg-[#9C84C4]' }
       };
 
+      // --- SÉCURITÉS SUR LES CALCULS ---
       const calculateNextMonthDettes = (prevDettes) => {
-        return (prevDettes || []).map(item => {
+        if (!Array.isArray(prevDettes)) return [];
+        return prevDettes.map(item => {
             let nouveauResteDu = parseFloat(item.resteDu) || 0;
             let nouveauxMoisRestants = parseInt(item.moisRestants) || 0;
             const payePrecedemment = item.reel > 0 ? parseFloat(item.reel) : parseFloat(item.prevu);
@@ -503,7 +502,8 @@
       };
 
       const calculateNextMonthEpargne = (prevEpargne) => {
-        return (prevEpargne || []).map(item => {
+        if (!Array.isArray(prevEpargne)) return [];
+        return prevEpargne.map(item => {
             return {
                 ...item,
                 reel: 0,
@@ -560,10 +560,14 @@
           if (docSnap.exists()) {
             let cloudData = docSnap.data().budgetData;
             
-            if (docId === "commun_2026_v1" && cloudData) {
+            // SÉCURITÉ : Vérification robuste des données reçues du cloud
+            if (!cloudData || typeof cloudData !== 'object') cloudData = {};
+
+            if (docId === "commun_2026_v1") {
                 let needsUpdate = false;
-                if (cloudData['Jan'] && (!cloudData['Jan'].revenus[0] || cloudData['Jan'].revenus[0].name === 'Salaire')) needsUpdate = true;
-                if (cloudData['Oct'] && !cloudData['Oct'].fixes.some(f => f.name === 'Ecole NDC')) needsUpdate = true;
+                if (!cloudData['Jan'] || !Array.isArray(cloudData['Jan'].revenus) || cloudData['Jan'].revenus.length === 0 || cloudData['Jan'].revenus[0].name === 'Salaire') needsUpdate = true;
+                if (!cloudData['Oct'] || !Array.isArray(cloudData['Oct'].fixes) || !cloudData['Oct'].fixes.some(f => f.name === 'Ecole NDC')) needsUpdate = true;
+                
                 if (needsUpdate) {
                     months.forEach(m => { cloudData[m] = generateEmptyMonth('Commun', m); });
                     setDoc(currentDocRef, { budgetData: cloudData, timestamp: Date.now() });
@@ -571,12 +575,12 @@
                 }
             }
 
-            if (docId === "perso_2026_v1" && cloudData) {
+            if (docId === "perso_2026_v1") {
                 let needsUpdatePerso = false;
-                if (cloudData['Juil'] && (!cloudData['Juil'].dettes || cloudData['Juil'].dettes.length < 3 || cloudData['Juil'].dettes[0].name !== 'Izicarte' || cloudData['Juil'].dettes[0].resteDu !== 5478)) {
+                if (!cloudData['Juil'] || !Array.isArray(cloudData['Juil'].dettes) || cloudData['Juil'].dettes.length < 3 || cloudData['Juil'].dettes[0].name !== 'Izicarte' || cloudData['Juil'].dettes[0].resteDu !== 5478) {
                     needsUpdatePerso = true;
                 }
-                if (cloudData['Aoû'] && (!cloudData['Aoû'].dettes || cloudData['Aoû'].dettes.length < 3 || cloudData['Aoû'].dettes[0].name !== 'Izicarte' || cloudData['Aoû'].dettes[0].resteDu === 0 || cloudData['Aoû'].dettes[0].resteDu === 5478)) {
+                if (!cloudData['Aoû'] || !Array.isArray(cloudData['Aoû'].dettes) || cloudData['Aoû'].dettes.length < 3 || cloudData['Aoû'].dettes[0].name !== 'Izicarte' || cloudData['Aoû'].dettes[0].resteDu === 0 || cloudData['Aoû'].dettes[0].resteDu === 5478) {
                     needsUpdatePerso = true;
                 }
 
@@ -587,7 +591,9 @@
                         { name: 'Voiture', occ: false, prevu: 250, reel: 248, diff: 2, resteDu: 12895, taux: 9, mensualite: 250, anticipe: 0, moisRestants: 66 }
                     ];
 
+                    if(!cloudData['Juil']) cloudData['Juil'] = generateEmptyMonth('Perso', 'Juil');
                     cloudData['Juil'].dettes = JSON.parse(JSON.stringify(baseDettesJuil));
+                    
                     const monthsToUpdate = ['Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
                     let currentDettes = JSON.parse(JSON.stringify(baseDettesJuil));
 
@@ -602,10 +608,11 @@
                 }
             }
 
-            if (!cloudData || Object.keys(cloudData).length === 0) {
+            if (Object.keys(cloudData).length === 0) {
                setDoc(currentDocRef, { budgetData: data.value, timestamp: Date.now() });
                return;
             }
+            
             isUpdatingFromCloud = true;
             data.value = cloudData;
             localStorage.setItem(`budget_${currentAccount.value}_${currentYear.value}_v1`, JSON.stringify(data.value)); 
@@ -620,18 +627,38 @@
             setDoc(currentDocRef, { budgetData: data.value, timestamp: Date.now() })
               .then(() => syncStatus.value = 'Synchronisé');
           }
+        }, (error) => {
+            console.error("Firebase error", error);
+            syncStatus.value = 'Erreur Cloud';
         });
       };
 
+      // INITIALISATION SÉCURISÉE AVANT LE PREMIER AFFICHAGE
       const loadContextData = () => {
         isInitialLoad = true;
         const localData = localStorage.getItem(`budget_${currentAccount.value}_${currentYear.value}_v1`);
+        let tempObj = {};
+        
         if (localData) {
-          data.value = JSON.parse(localData);
+          try {
+            tempObj = JSON.parse(localData);
+          } catch(e) {
+            months.forEach(m => tempObj[m] = generateEmptyMonth(currentAccount.value, m));
+          }
         } else {
-          months.forEach(m => data.value[m] = generateEmptyMonth(currentAccount.value, m));
+          months.forEach(m => tempObj[m] = generateEmptyMonth(currentAccount.value, m));
         }
+        
+        // S'assurer que tous les mois existent pour éviter les plantages
+        months.forEach(m => {
+          if (!tempObj[m]) tempObj[m] = generateEmptyMonth(currentAccount.value, m);
+        });
+        
+        data.value = tempObj;
       };
+
+      // On charge les données localement TOUT DE SUITE (avant que la page HTML ne s'affiche)
+      loadContextData();
 
       const changeContext = () => {
         loadContextData();
@@ -663,12 +690,16 @@
         }, 1500);
       }, { deep: true });
 
-      // LA CORRECTION CRUCIALE DE L'ÉCRAN BLANC SE TROUVE ICI
-      const currentData = computed(() => data.value[activeTab.value] || { revenus:[], epargne:[], fixes:[], dettes:[], variables:[] });
+      // C'EST ICI LA CORRECTION ANTI-CRASH POUR LE HTML
+      // Si la donnée du mois en cours est bizarrement absente, on renvoie une structure vide propre pour ne pas crasher.
+      const currentData = computed(() => {
+        return data.value[activeTab.value] || { revenus: [], epargne: [], fixes: [], dettes: [], variables: [] };
+      });
 
-      const calculateDiff = (prevu, reel, type) => type === 'revenus' ? (reel || 0) - (prevu || 0) : (prevu || 0) - (reel || 0);
+      const calculateDiff = (prevu, reel, type) => type === 'revenus' ? (parseFloat(reel) || 0) - (parseFloat(prevu) || 0) : (parseFloat(prevu) || 0) - (parseFloat(reel) || 0);
       
       const addItem = (blockId) => {
+        if(!currentData.value[blockId]) currentData.value[blockId] = [];
         currentData.value[blockId].push({ name: '', occ: false, prevu: 0, reel: 0, diff: 0, reserve: 0, resteDu: 0, taux: 0, mensualite: 0, anticipe: 0, moisRestants: 0 });
       };
 
@@ -693,8 +724,13 @@
           const localPrevData = localStorage.getItem(prevYearKey);
           
           if (localPrevData) {
-            prevData = JSON.parse(localPrevData)['Déc'];
-            prevMonthLabel = `Décembre ${prevYearNum}`;
+            try {
+              prevData = JSON.parse(localPrevData)['Déc'];
+              prevMonthLabel = `Décembre ${prevYearNum}`;
+            } catch(e) {
+              alert("Erreur lors de la lecture des données de l'année précédente.");
+              return;
+            }
           } else {
             alert(`Impossible d'importer : Aucune donnée locale trouvée pour Décembre ${prevYearNum}. Ouvrez d'abord l'année ${prevYearNum} pour synchroniser ses données.`);
             return;
@@ -705,7 +741,10 @@
           const newData = {};
           
           blocksLayout.value.forEach(blockId => {
-            let filteredPrevData = ((prevData && prevData[blockId]) || []).filter(item => !item.occ);
+            let filteredPrevData = [];
+            if (prevData && Array.isArray(prevData[blockId])) {
+                filteredPrevData = prevData[blockId].filter(item => !item.occ);
+            }
             
             if (blockId === 'dettes') {
                 newData[blockId] = calculateNextMonthDettes(filteredPrevData);
@@ -744,13 +783,13 @@
         }
       };
 
-      const sumReel = (arr) => (arr || []).reduce((sum, item) => sum + (item.reel || 0), 0);
-      const sumPrevu = (arr) => (arr || []).reduce((sum, item) => sum + (item.prevu || 0), 0);
+      // SÉCURITÉ DE CALCULS : Array.isArray protège contre les données corrompues de Firebase
+      const sumReel = (arr) => Array.isArray(arr) ? arr.reduce((sum, item) => sum + (parseFloat(item.reel) || 0), 0) : 0;
+      const sumPrevu = (arr) => Array.isArray(arr) ? arr.reduce((sum, item) => sum + (parseFloat(item.prevu) || 0), 0) : 0;
 
       const totals = computed(() => {
         const d = currentData.value;
-        if(!d || !d.revenus || !d.epargne || !d.fixes || !d.dettes || !d.variables) 
-          return { revenus: 0, epargne: 0, fixes: 0, dettes: 0, variables: 0, sorties: 0, resteAVivre: 0 };
+        if(!d) return { revenus: 0, epargne: 0, fixes: 0, dettes: 0, variables: 0, sorties: 0, resteAVivre: 0 };
         
         const rev = sumReel(d.revenus);
         const ep = sumReel(d.epargne);
@@ -766,8 +805,7 @@
 
       const totalsPrevu = computed(() => {
         const d = currentData.value;
-        if(!d || !d.revenus || !d.epargne || !d.fixes || !d.dettes || !d.variables) 
-          return { revenus: 0, sorties: 0, resteAVivre: 0 };
+        if(!d) return { revenus: 0, sorties: 0, resteAVivre: 0 };
           
         const rev = sumPrevu(d.revenus);
         const ep = sumPrevu(d.epargne);
@@ -805,8 +843,8 @@
             let maxReserve = 0;
             months.forEach(m => {
                 const d = data.value[m];
-                if (d) {
-                    const monthRes = (d.epargne || []).reduce((sum, item) => sum + (item.reserve || 0), 0);
+                if (d && Array.isArray(d.epargne)) {
+                    const monthRes = d.epargne.reduce((sum, item) => sum + (parseFloat(item.reserve) || 0), 0);
                     if (monthRes > maxReserve) maxReserve = monthRes;
                 }
             });
@@ -814,8 +852,8 @@
         }
         
         const d = currentData.value;
-        if(!d) return 0;
-        return (d.epargne || []).reduce((sum, item) => sum + (item.reserve || 0), 0);
+        if(!d || !Array.isArray(d.epargne)) return 0;
+        return d.epargne.reduce((sum, item) => sum + (parseFloat(item.reserve) || 0), 0);
       });
 
       const draggedItem = ref(null);
@@ -937,7 +975,7 @@
       };
 
       onMounted(() => { 
-        loadContextData();
+        // Les données locales sont déjà chargées avant le mount (plus haut)
         setupFirebaseListener(); 
         updateChart(); 
       });
