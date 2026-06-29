@@ -121,9 +121,7 @@
     </button>
   </div>
 
-  <!-- VUE MENSUELLE CLASSIQUE -->
   <div v-if="activeTab !== 'Bilan'">
-    
     <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-8">
       <div class="bg-white p-4 rounded-xl card-shadow border-l-4 border-green-500">
         <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Revenus</p>
@@ -164,7 +162,6 @@
             <h2 class="font-bold tracking-wide uppercase text-sm">VUE D'ENSEMBLE {{ activeTab.toUpperCase() }}</h2>
           </div>
           <div class="flex gap-2">
-            <!-- LE BOUTON EST MAINTENANT ACTIF AUSSI EN JANVIER POUR LES CHANGEMENTS D'ANNÉE -->
             <button v-if="activeTab !== 'Bilan'" @click="importFromPrevious" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-medium flex items-center gap-2 transition card-shadow">
               <i class="ph-bold ph-arrow-u-down-left"></i> Mois précédent
             </button>
@@ -475,9 +472,8 @@
         variables: { title: 'VARIABLES', bg: 'bg-[#9C84C4]' }
       };
 
-      // --- LE MOTEUR MATHÉMATIQUE DES CRÉDITS ET ÉPARGNE ---
       const calculateNextMonthDettes = (prevDettes) => {
-        return prevDettes.map(item => {
+        return (prevDettes || []).map(item => {
             let nouveauResteDu = parseFloat(item.resteDu) || 0;
             let nouveauxMoisRestants = parseInt(item.moisRestants) || 0;
             const payePrecedemment = item.reel > 0 ? parseFloat(item.reel) : parseFloat(item.prevu);
@@ -507,7 +503,7 @@
       };
 
       const calculateNextMonthEpargne = (prevEpargne) => {
-        return prevEpargne.map(item => {
+        return (prevEpargne || []).map(item => {
             return {
                 ...item,
                 reel: 0,
@@ -517,7 +513,6 @@
         });
       };
 
-      // Modèles de données
       const communTemplateJanSep = {
         revenus: [{ name: 'Geoffrey', occ: false, prevu: 900, reel: 900, diff: 0 }, { name: 'Océane', occ: false, prevu: 550, reel: 550, diff: 0 }, { name: 'CAF', occ: false, prevu: 368, reel: 368, diff: 0 }, { name: 'CMG', occ: false, prevu: 855, reel: 855, diff: 0 }],
         epargne: [],
@@ -565,6 +560,48 @@
           if (docSnap.exists()) {
             let cloudData = docSnap.data().budgetData;
             
+            if (docId === "commun_2026_v1" && cloudData) {
+                let needsUpdate = false;
+                if (cloudData['Jan'] && (!cloudData['Jan'].revenus[0] || cloudData['Jan'].revenus[0].name === 'Salaire')) needsUpdate = true;
+                if (cloudData['Oct'] && !cloudData['Oct'].fixes.some(f => f.name === 'Ecole NDC')) needsUpdate = true;
+                if (needsUpdate) {
+                    months.forEach(m => { cloudData[m] = generateEmptyMonth('Commun', m); });
+                    setDoc(currentDocRef, { budgetData: cloudData, timestamp: Date.now() });
+                    return; 
+                }
+            }
+
+            if (docId === "perso_2026_v1" && cloudData) {
+                let needsUpdatePerso = false;
+                if (cloudData['Juil'] && (!cloudData['Juil'].dettes || cloudData['Juil'].dettes.length < 3 || cloudData['Juil'].dettes[0].name !== 'Izicarte' || cloudData['Juil'].dettes[0].resteDu !== 5478)) {
+                    needsUpdatePerso = true;
+                }
+                if (cloudData['Aoû'] && (!cloudData['Aoû'].dettes || cloudData['Aoû'].dettes.length < 3 || cloudData['Aoû'].dettes[0].name !== 'Izicarte' || cloudData['Aoû'].dettes[0].resteDu === 0 || cloudData['Aoû'].dettes[0].resteDu === 5478)) {
+                    needsUpdatePerso = true;
+                }
+
+                if (needsUpdatePerso) {
+                    const baseDettesJuil = [
+                        { name: 'Izicarte', occ: false, prevu: 150, reel: 150, diff: 0, resteDu: 5478, taux: 16, mensualite: 150, anticipe: 0, moisRestants: 51 },
+                        { name: 'Crédit', occ: false, prevu: 131, reel: 131, diff: 0, resteDu: 4744, taux: 0, mensualite: 131, anticipe: 0, moisRestants: 37 },
+                        { name: 'Voiture', occ: false, prevu: 250, reel: 248, diff: 2, resteDu: 12895, taux: 9, mensualite: 250, anticipe: 0, moisRestants: 66 }
+                    ];
+
+                    cloudData['Juil'].dettes = JSON.parse(JSON.stringify(baseDettesJuil));
+                    const monthsToUpdate = ['Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+                    let currentDettes = JSON.parse(JSON.stringify(baseDettesJuil));
+
+                    monthsToUpdate.forEach(m => {
+                        currentDettes = calculateNextMonthDettes(currentDettes);
+                        if (!cloudData[m]) cloudData[m] = generateEmptyMonth('Perso', m);
+                        cloudData[m].dettes = JSON.parse(JSON.stringify(currentDettes));
+                    });
+
+                    setDoc(currentDocRef, { budgetData: cloudData, timestamp: Date.now() });
+                    return; 
+                }
+            }
+
             if (!cloudData || Object.keys(cloudData).length === 0) {
                setDoc(currentDocRef, { budgetData: data.value, timestamp: Date.now() });
                return;
@@ -626,7 +663,8 @@
         }, 1500);
       }, { deep: true });
 
-      const currentData = computed(() => data.value[activeTab.value]);
+      // LA CORRECTION CRUCIALE DE L'ÉCRAN BLANC SE TROUVE ICI
+      const currentData = computed(() => data.value[activeTab.value] || { revenus:[], epargne:[], fixes:[], dettes:[], variables:[] });
 
       const calculateDiff = (prevu, reel, type) => type === 'revenus' ? (reel || 0) - (prevu || 0) : (prevu || 0) - (reel || 0);
       
@@ -640,19 +678,16 @@
         }
       };
 
-      // MODIFICATION CHIRURGICALE POUR LA GESTION DES CHANGEMENTS D'ANNÉE (JANVIER <- DÉCEMBRE)
       const importFromPrevious = () => {
         const currentIndex = months.indexOf(activeTab.value);
         let prevData = null;
         let prevMonthLabel = '';
 
         if (currentIndex > 0) {
-          // Cas classique : même année, mois d'avant
           const prevMonth = months[currentIndex - 1];
           prevData = data.value[prevMonth];
           prevMonthLabel = prevMonth;
         } else if (currentIndex === 0) {
-          // Cas Janvier : On va chercher le mois de Décembre de l'année d'avant
           const prevYearNum = parseInt(currentYear.value) - 1;
           const prevYearKey = `budget_${currentAccount.value}_${prevYearNum}_v1`;
           const localPrevData = localStorage.getItem(prevYearKey);
@@ -685,7 +720,6 @@
         }
       };
 
-      // PROPAGER JUSQU'À DÉCEMBRE
       const propagateFutureMonths = () => {
         const currentIndex = months.indexOf(activeTab.value);
         if (currentIndex === -1 || currentIndex === 11) {
@@ -694,7 +728,7 @@
         }
 
         if (confirm(`Voulez-vous propager les dettes et l'épargne de ${activeTab.value} à tous les mois suivants jusqu'en Décembre ?`)) {
-            let currentMonthData = JSON.parse(JSON.stringify(data.value[activeTab.value]));
+            let currentMonthData = data.value[activeTab.value] ? JSON.parse(JSON.stringify(data.value[activeTab.value])) : generateEmptyMonth(currentAccount.value, activeTab.value);
             
             for (let i = currentIndex + 1; i < 12; i++) {
                 const nextMonthName = months[i];
@@ -713,7 +747,6 @@
       const sumReel = (arr) => (arr || []).reduce((sum, item) => sum + (item.reel || 0), 0);
       const sumPrevu = (arr) => (arr || []).reduce((sum, item) => sum + (item.prevu || 0), 0);
 
-      // SÉCURITÉ DE CHARGEMENT ANTI-CRASH
       const totals = computed(() => {
         const d = currentData.value;
         if(!d || !d.revenus || !d.epargne || !d.fixes || !d.dettes || !d.variables) 
@@ -785,7 +818,6 @@
         return (d.epargne || []).reduce((sum, item) => sum + (item.reserve || 0), 0);
       });
 
-      // DRAG AND DROP CONSERVÉ ENTIÈREMENT
       const draggedItem = ref(null);
       const startDrag = (evt, index) => { draggedItem.value = index; };
       const onDrop = (evt, index) => {
